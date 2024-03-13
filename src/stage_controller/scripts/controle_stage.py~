@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+
+import rospy
+from os import system
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
+from tf.transformations import *
+import numpy as np
+import random
+import math
+
+laser_msg = LaserScan()
+odometry_msg = Odometry()
+velocity = Twist()
+
+state = next_state = 'start'
+roll = pitch = yaw = 0.0
+target_angle = 0.0
+TURNING = False
+cont = 0
+kp = 0.9
+
+#TARGETs [X,Y]
+target_0 = np.array([8.0,  13.0]) #red
+target_1 = np.array([17.0,  4.4]) #blue
+target_2 = np.array([16.2, 12.0]) #green
+target_3 = np.array([ 2.0,  2.0]) #yellow
+targets = np.array([target_0,target_1,target_2,target_3])
+
+target = 0
+target_x = targets[target][0]
+target_y = targets[target][1]
+
+# Minimum distance to detected the target
+min_distance = 0.5
+
+def show_info():
+  global target_x, target_y, velocity
+  x = odometry_msg.pose.pose.position.x
+  y = odometry_msg.pose.pose.position.y
+  distance = math.sqrt((x-target_x)**2 + (y-target_y)**2)  
+  
+  system('clear')
+  
+  rospy.loginfo(state.upper())
+  rospy.loginfo("T: (%.2f, %.2f)" % (target_x, target_y))
+  rospy.loginfo("P: (%.2f, %.2f)" % (x, y))
+  rospy.loginfo("D: %.2f" % distance)
+  rospy.loginfo("robot angle: %f" % (get_rotation() * 180.0/math.pi))
+  rospy.loginfo("robot2target_angle: %f" % (get_robot2target_angle() * 180.0/math.pi))
+  rospy.loginfo("robot2target_rel_angle: %f" % get_robot2target_rel_angle())
+  #rospy.loginfo("Vz: %f " % velocity.angular.z)
+  rospy.loginfo("sensor[%d] = %f " % (get_robot2target_sensor_index(), laser_msg.ranges[get_robot2target_sensor_index()]))
+  
+  rospy.sleep(0.2)
+
+def go_to_start_pos():
+  start_point = Odometry()
+  
+  start_point.pose.pose.position.x = 8.0
+  start_point.pose.pose.position.y = 8.0
+  start_point.pose.pose.position.z = 0.0
+  
+  [x,y,z,w] = quaternion_from_euler(0.0, 0.0, 0.0)
+  
+  start_point.pose.pose.orientation.x = x
+  start_point.pose.pose.orientation.x = y
+  start_point.pose.pose.orientation.x = z
+  start_point.pose.pose.orientation.x = w
+
+  pub_pos.publish(start_point)
+
+def get_rotation():
+  global roll, pitch, yaw
+  x_o = odometry_msg.pose.pose.orientation.x
+  y_o = odometry_msg.pose.pose.orientation.y
+  z_o = odometry_msg.pose.pose.orientation.z
+  w_o = odometry_msg.pose.pose.orientation.w
+  
+  (roll, pitch, yaw) = euler_from_quaternion ([x_o, y_o, z_o, w_o])
+  
+  return yaw
+
+def move_forward():
+  velocity.linear.x = 0.5
+  velocity.angular.z = 0.0
+  pub.publish(velocity)  
+
+def stop():
+  velocity.linear.x = 0.0
+  velocity.angular.z = 0.0
+  pub.publish(velocity)
+
+def get_turn_target_angle(turn_angle):
+  robot_angle = get_rotation() * 180.0 / math.pi
+  target_angle = robot_angle + turn_angle
+  
+  if(target_angle < -180.0):
+    return target_angle + 360.0
+  elif(target_angle > 180.0):
+    return target_angle - 360.0
+  else:
+    return target_angle
+
+def turn(target_degree):
+  robot_angle = get_rotation()
+  target_rad = target_degree * math.pi/180.0
+  velocity.angular.z = kp * (target_rad - robot_angle)
+  pub.publish(velocity)
+
+def turn_right():
+  global next_state, target_angle, TURNING
+  if(not TURNING):
+    target_angle = get_turn_target_angle(-30)
+    TURNING = True
+
+  turn(target_angle)
+
+  if(math.isclose(velocity.angular.z, 0.0, abs_tol=0.0000001)):
+    stop()
+    TURNING = False
+    next_state = 'move'
+
+def turn_left():
+  global next_state, target_angle, TURNING
+  if(not TURNING):
+    target_angle = get_turn_target_angle(30)
+    TURNING = True
+    
+  turn(target_angle)
+  
+  if(math.isclose(velocity.angular.z, 0.0, abs_tol=0.0000001)):
+    stop()
+    TURNING = False
+    next_state = 'move'
+  
+def start():
+  global cont, next_state
+  #go_to_start_pos()
+  if(cont == 10):
+    next_state = 'aim'
+  cont+=1  
+
+def aim():
+  global next_state
+  turn(get_robot2target_angle() * 180.0 / math.pi)
+  if(math.isclose(velocity.angular.z, 0.0, abs_tol=0.0000001)):
+    next_state = 'move'
+    
+def odometry_callback(data):
+  global odometry_msg
+  odometry_msg = data
+
+def laser_callback(data):
+  global laser_msg
+  laser_msg = data
+
+def get_robot2target_angle():  
+  global target_x, target_y
+  x = odometry_msg.pose.pose.position.x
+  y = odometry_msg.pose.pose.position.y
+  target_angle = math.atan2((target_y-y),(target_x-x))
+
+  return target_angle
+
+
+
+def fsm():
+  global next_state, state
+  
+  move_forward()
+    
+  x = odometry_msg.pose.pose.position.x
+  y = odometry_msg.pose.pose.position.y
+
+
+if __name__ == "__main__": 
+  # Node
+  rospy.init_node("controle_stage_node", anonymous=False)  
+  # Subscribers
+  rospy.Subscriber("/base_pose_ground_truth", Odometry, odometry_callback)
+  #rospy.Subscriber("/odom", Odometry, odometry_callback)
+  rospy.Subscriber("/base_scan", LaserScan, laser_callback)
+  # Publishers
+  pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+  pub_pos = rospy.Publisher("/base_pose_ground_truth", Odometry, queue_size=10)
+  
+  rate = rospy.Rate(10) #10hz
+  
+  while not rospy.is_shutdown():
+    x = odometry_msg.pose.pose.position.x
+    y = odometry_msg.pose.pose.position.y
+    
+    # Distance to target
+    distance = math.sqrt((x-target_x)**2 + (y-target_y)**2)
+    
+    # Wait to sensor starts
+    if(laser_msg.ranges):
+      # Checks if reached the target
+      if(distance > min_distance):
+      
+        fsm()
+#        show_info()
+        
+      else:
+        velocity.linear.x = 0.0
+        velocity.angular.z = 0.0
+        pub.publish(velocity)
+        rospy.loginfo("Target reached!!")
+
+    rate.sleep()

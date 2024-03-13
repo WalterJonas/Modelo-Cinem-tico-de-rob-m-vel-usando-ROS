@@ -1,0 +1,4 @@
+<launch>
+	<node name="stageros" pkg="stage_ros" type="stageros" args="$(find stage_controller)/world/pioneer3dx-sick-ModeloCinematico_1"/>
+	<node pkg="stage_controller" type="controle_stage.py" name="stage_controller" output="screen" />
+</launch>

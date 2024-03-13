@@ -1,0 +1,4 @@
+<launch>
+	<node name="stageros" pkg="stage_ros" type="stageros" args="$(find stage_controller)/world/pioneer3dx-sick-ModeloCinematico_3_q2a.world"/>	
+	<node name="questao2a"  pkg="stage_controller" type="questao2A.py" output="screen"/>
+</launch>
